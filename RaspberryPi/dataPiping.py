@@ -22,9 +22,32 @@ reset = digitalio.DigitalInOut(board.D6)
 # Transceiver class
 rfm9x = adafruit_rfm9x.RFM9x(spi, cs, reset, 915.0)
 
-# Recieve transmittion
-rfm9x.receive() # pass 'timeout=5.0' to wait for 5 seconds, 0.5s by default
+class PacketReciever:
+    info = '' # correct datatype?
+    def updatePacket():
+        info = rfm9x.receive()
+        if info is None:
+            print("Packet not recieved")
+        else:
+            print("Packet recieved")
+            # parse?
 
-# Format sensor metadata for database
+    def parse():
+        # [add logic]
+        print()
 
-# Add to database
+# Listening Loop
+def listeningLoop():
+    
+    myPacket = PacketReciever()
+
+    while True:
+        # 1. Recieve transmittion
+        myPacket.updatePacket() 
+        
+        # 2. Parse
+        myPacket.parse() # pass 'timeout=5.0' to wait for 5 seconds, 0.5s by default
+
+        # 3. Add to database
+        # [add code]
+

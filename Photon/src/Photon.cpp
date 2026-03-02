@@ -32,7 +32,7 @@ void loop() {
   int16_t temperature = mySHTC3.toPercent() * 100
   uint16_t humidity = mySHTC3.toDegC() * 100
 
-  // 4. Save To Photon
+  // 4. Save To Photon????
 
   // 5. LoRa Uplink
 
