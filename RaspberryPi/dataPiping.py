@@ -2,52 +2,82 @@
 
 """
 Pipeline:                 
-Sensor --> Photon --> Transmitter ---[LoRa]---> Reciever --> Raspberry Pi --> MariaDB
+Sensor --> Photon --> Transmitter )))[LoRa]))) Reciever --> Raspberry Pi --> MariaDB
                     (Adafruit RF95W)          (Adafruit RF95W)
 
-photon.cpp --> ... --> dataPiping.py --> database.py
+photon.cpp --> dataPiping.py --> database.py
 """
 
-# Import libraries
 import board
 import busio
 import digitalio
 import adafruit_rfm9x
+
+import socket
+import time 
+
+# Setup
 spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+UDP_PORT = 540
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(('0.0.0.0', UDP_PORT)) 
 
-# Define pins
-cs = digitalio.DigitalInOut(board.D5)
-reset = digitalio.DigitalInOut(board.D6)
+cs = digitalio.DigitalInOut(board.D8)
+reset = digitalio.DigitalInOut(board.D25)
 
-# Transceiver class
-rfm9x = adafruit_rfm9x.RFM9x(spi, cs, reset, 915.0)
+    # Create rfm9x object
+rfm9x = adafruit_rfm9x.RFM9x(spi, cs, reset, 868.0) # 868MHz
 
-class PacketReciever:
-    info = '' # correct datatype?
-    def updatePacket():
-        info = rfm9x.receive()
-        if info is None:
-            print("Packet not recieved")
+class Receiver:
+    def __init__(self, payload=None):
+        self.payload = payload
+
+    def getPayload(self):
+        self.payload = rfm9x.receive(timeout=5.0) # wait 5s
+        if not self.payload or len(self.payload) < 3: # CHANGE ONCE PACKET FORMAT IS IMPLEMENTED
+            print("Packet not received!")
+            return False
         else:
-            print("Packet recieved")
-            # parse?
+            print("Packet received!")
+            return True
 
-    def parse():
-        # [add logic]
-        print()
+    def parse(self):
+        rawTemp = (self.payload[0] << 8) | self.payload[1]
+        temperature = rawTemp / 100.0
+        humidity = self.payload[2]
+        return temperature, humidity
+
+class Transmitter:
+    def __init__(self, payload=None):
+        self.payload = payload
+
+    def formatPayload(self, message): 
+        self.payload = message.encode('utf-8')
+
+    def transmitPayload(self):
+        rfm9x.send(self.payload)
 
 # Listening Loop
 def listeningLoop():
-    
-    myPacket = PacketReciever()
+    myReceiver = Receiver()
+    myTransmitter = Transmitter()
 
     while True:
         # 1. Recieve transmittion
-        myPacket.updatePacket() 
+        success = myReceiver.getPayload() 
         
-        # 2. Parse
-        myPacket.parse() # pass 'timeout=5.0' to wait for 5 seconds, 0.5s by default
+        # 2. Configure message
+        if success:
+            temperature, humidity = myReceiver.parse()
+            message = f"RASPBERRY PI now has H={humidity}%, T={temperature}C"
+        else:
+            message = "Error - message not received"
+
+        # 3. Respond
+        myTransmitter.formatPayload(message)
+        myTransmitter.transmitPayload()
+
+        time.sleep(5.0)
 
         # 3. Add to database
-        # [add code]
-
+        # [add logic]
