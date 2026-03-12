@@ -81,3 +81,6 @@ def listeningLoop():
 
         # 3. Add to database
         # [add logic]
+
+# start loop
+listeningLoop()

@@ -7,9 +7,6 @@ SHTC3 mySHTC3;
 uint packetLength = 3;
 bool loraReady = false;
 
-//SX1278 radio = SX1278(new Module(D10, D2, D9)); // CS, DIO0(g0), RST pins
-//int state;
-
 void setup() {
   Serial.begin(115200);
   waitFor(Serial.isConnected, 10000);
@@ -81,14 +78,20 @@ void loop() {
     delay(1000);
     // 5.3 Read from Raspberry Pi
     char received[64];
+    
     int len = 0;
     int packetSize = LoRa.parsePacket();
     if (packetSize > 0) {
       while (LoRa.available() && len < 64) {
         received[len++] = (char)LoRa.read();
       }
-      Serial.print("Response Recieved! - Message: ");
+      Serial.print("\nResponse Recieved! - Message: ");
       Serial.println(received);
+      Serial.print("RSSI: ");
+      Serial.println(LoRa.packetRssi());
+      Serial.print("SNR: ");
+      Serial.println(LoRa.packetSnr());
+      Serial.println();
     } 
     else {
       Serial.println("Failed to receive response.");
