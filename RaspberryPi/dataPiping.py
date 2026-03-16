@@ -24,6 +24,7 @@ sock.bind(('0.0.0.0', UDP_PORT))
 
 cs = digitalio.DigitalInOut(board.D8)
 reset = digitalio.DigitalInOut(board.D25)
+dio = digitalio.DigitalInOut(board.D24)
 
     # Create rfm9x object
 rfm9x = adafruit_rfm9x.RFM9x(spi, cs, reset, 868.0) # 868MHz
