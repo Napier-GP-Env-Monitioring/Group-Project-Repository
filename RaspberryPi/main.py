@@ -4,7 +4,7 @@ import socket
 
 UDP_PORT = 540
 
-def udp_listener():
+def udpListener():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', UDP_PORT))
     print(f"UDP listener running on port {UDP_PORT}")
@@ -14,7 +14,7 @@ def udp_listener():
 
 if __name__ == "__main__":
     # start UDP listener in background thread
-    Thread(target=udp_listener, daemon=True).start()
+    Thread(target=udpListener, daemon=True).start()
 
     # start Flask server (blocks main thread)
     app.run(host="0.0.0.0", port=5000)

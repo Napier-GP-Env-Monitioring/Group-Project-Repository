@@ -1,93 +1,139 @@
-# MTTQ/NetCat??
-
 """
-Pipeline:                 
-Sensor --> Photon --> Transmitter )))[LoRa]))) Reciever --> Raspberry Pi --> MariaDB
-                    (Adafruit RF95W)          (Adafruit RF95W)
-
-photon.cpp --> dataPiping.py --> database.py
+Raspberry Pi LoRa receiver/transmitter using spidev (RFM9x)
+Pipeline:
+Sensor --> Photon --> Transmitter )))[LoRa]))) Receiver --> Raspberry Pi --> MariaDB
 """
 
-import board
-import busio
-import digitalio
-import adafruit_rfm9x
+'''
+todo:
+1. put resetModule() & setFrequency() into an initialise function
+2. move spiRead() & spiWrite into reciever/transceiver classes
+'''
 
+
+import spidev
+import time
+#import digitalio
+#import board
+import RPi.GPIO as GPIO # for DIO0 interrupt
 import socket
-import time 
 
-# Setup
-spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+# UDP socket (for flask app)
 UDP_PORT = 540
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('0.0.0.0', UDP_PORT)) 
+sock.bind(('0.0.0.0', UDP_PORT))
 
-cs = digitalio.DigitalInOut(board.CE0)
-reset = digitalio.DigitalInOut(board.D25)
-dio = digitalio.DigitalInOut(board.D24)
+# GPIO/SPI
+RESET_PIN = 22 # pin 22 (GPIO25)
+CS_PIN = 8 # pin 24 (CE0)
+DIO0_PIN = 24 # pin 18 (GPIO24)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(DIO0_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+spi = spidev.SpiDev()
+spi.open(0, 0) # bus 0, CE0
+spi.max_speed_hz = 500000 # start safe, can increase later
 
-    # Create rfm9x object
-try:
-    rfm9x = adafruit_rfm9x.RFM9x(spi, cs, reset, 868.0) # 868MHz
-    print("RMF9x detected")
-except RuntimeError as e:
-    print("Failed to find RMF9x")
+# helper functions for RFM9x registers:
 
+REG_VERSION = 0x42 # chip version
+REG_OP_MODE = 0x01 # operating mode (sleep/rx/tx)
+REG_FRF_MSB = 0x06 # frequency pt. 1
+REG_FRF_MID = 0x07 # frequency pt. 2
+REG_FRF_LSB = 0x08 # frequency pt. 3
+
+def spiRead(register):
+    resp = spi.xfer2([register & 0x7F, 0x00])
+    return resp[1]
+
+def spiWrite(register, value):
+    spi.xfer2([register | 0x80, value])
+
+def resetModule(): # important for interrupt pin, pulse RST to stop any bad state 
+    GPIO.setup(RESET_PIN, GPIO.OUT)
+    GPIO.output(RESET_PIN, GPIO.LOW)
+    time.sleep(0.05)
+    GPIO.output(RESET_PIN, GPIO.HIGH)
+    time.sleep(0.1)
+
+def setFrequency(frequencyMHz):
+    frf = int(frequencyMHz * 1000000.0 / 61.03515625)
+    spiWrite(REG_FRF_MSB, (frf >> 16) & 0xFF)
+    spiWrite(REG_FRF_MID, (frf >> 8) & 0xFF)
+    spiWrite(REG_FRF_LSB, frf & 0xFF)
+
+# classes:
 class Receiver:
-    def __init__(self, payload=None):
-        self.payload = payload
+    def __init__(self):
+        self.payload = None
 
-    def getPayload(self):
-        self.payload = rfm9x.receive(timeout=5.0) # wait 5s
-        if not self.payload or len(self.payload) < 3: # CHANGE ONCE PACKET FORMAT IS IMPLEMENTED
-            print("Packet not received!")
-            return False
-        else:
-            print("Packet received!")
-            return True
+    def recieve(self, timeout=5.0):
+        startTime = time.time()
+        while (time.time() - startTime) < timeout:  # listen for 5s 
+            if GPIO.input(DIO0_PIN): # if signal, packet ready
+                length = spiRead(0x13) # RegRxNbBytes
+                self.payload = [spiRead(0x00) for _ in range(length)]
+                print("Packet received!")
+                return True
+            time.sleep(0.01)
+        print("Packet not received!")
+        return False
 
-    def parse(self):
-        rawTemp = (self.payload[0] << 8) | self.payload[1]
-        temperature = rawTemp / 100.0
+    def parsePayload(self):
+        rawTemperature = (self.payload[0] << 8) | self.payload[1]
+        temperature = rawTemperature / 100.0
         humidity = self.payload[2]
         return temperature, humidity
 
 class Transmitter:
-    def __init__(self, payload=None):
-        self.payload = payload
+    def __init__(self):
+        self.payload = None
 
-    def formatPayload(self, message): 
-        self.payload = message.encode('utf-8')
+    def transmit(self):
+        for b in self.payload:
+            spiWrite(0x00, b)
+        spiWrite(REG_OP_MODE, 0x83)  # TX mode
+        time.sleep(0.1)
+        spiWrite(REG_OP_MODE, 0x85)  # back to RX mode
 
-    def transmitPayload(self):
-        rfm9x.send(self.payload)
+    def formatPayload(self, message):
+        self.payload = [ord(c) for c in message]
 
-# Listening Loop
+
+# module initialisation
+resetModule()
+version = spiRead(REG_VERSION)
+if version != 0x12:
+    print(f"Failed to detect RFM9x! Version read: {version}")
+    exit(1)
+print(f"RFM9x detected! Version: 0x{version:X}")
+
+# set frequency
+setFrequency(868.0)  # 868 MHz
+spiWrite(REG_OP_MODE, 0x85)  # continuous RX mode
+
+# main loop
 def listeningLoop():
-    myReceiver = Receiver()
-    myTransmitter = Transmitter()
+    receiver = Receiver()
+    transmitter = Transmitter()
 
     while True:
-        # 1. Recieve transmittion
-        success = myReceiver.getPayload() 
-        
-        # 2. Configure message
-        if success:
-            temperature, humidity = myReceiver.parse()
+        if receiver.recieve():
+            temperature, humidity = receiver.parsePayload()
             message = f"RASPBERRY PI now has H={humidity}%, T={temperature}C"
             print("Transmittion recieved, sending response...")
         else:
             message = "Error - message not received"
-            print("No reception")
-
-        # 3. Respond
-        myTransmitter.formatPayload(message)
-        myTransmitter.transmitPayload()
-
-        time.sleep(5.0)
-
-        # 3. Add to database
-        # [add logic]
+            print("No reception, could not receive packet!")
+        transmitter.formatPayload(message)
+        transmitter.transmit()
+        time.sleep(5)
 
 # start loop
-listeningLoop()
+if __name__ == "__main__":
+    try:
+        listeningLoop()
+    except KeyboardInterrupt:
+        print("Exiting...")
+    finally:
+        spi.close()
+        GPIO.cleanup()
