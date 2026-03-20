@@ -10,7 +10,6 @@ todo:
 2. move spiRead() & spiWrite into reciever/transceiver classes
 '''
 
-
 import spidev
 import time
 #import digitalio
@@ -28,7 +27,7 @@ RESET_PIN = 22 # pin 22 (GPIO25)
 CS_PIN = 8 # pin 24 (CE0)
 DIO0_PIN = 24 # pin 18 (GPIO24)
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(DIO0_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+GPIO.setup(DIO0_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) #
 spi = spidev.SpiDev()
 spi.open(0, 0) # bus 0, CE0
 spi.max_speed_hz = 500000 # start safe, can increase later
@@ -68,9 +67,14 @@ class Receiver:
 
     def recieve(self, timeout=5.0):
         startTime = time.time()
-        while (time.time() - startTime) < timeout:  # listen for 5s 
+        while (time.time() - startTime) < timeout:
             if GPIO.input(DIO0_PIN): # if signal, packet ready
                 length = spiRead(0x13) # RegRxNbBytes
+                
+                # read from correct place
+                currentAddr = spiRead(0x10) # RegFifoRxCurrentAddr
+                spiWrite(0x0D, currentAddr) # RegFifoAddrPtr - seek to start of packet
+
                 self.payload = [spiRead(0x00) for _ in range(length)]
                 print("Packet received!")
                 return True
