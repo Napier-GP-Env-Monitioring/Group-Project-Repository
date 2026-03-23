@@ -7,6 +7,23 @@ SHTC3 mySHTC3;
 uint packetLength = 3;
 bool loraReady = false;
 
+class Reciever {
+  public:
+    Reciever() {
+      payload = 
+    }
+    void recieve() {
+
+    }
+}
+
+class Transmitter {
+  public:
+    void transmit() {
+
+    }
+}
+
 void setup() {
   Serial.begin(115200);
   waitFor(Serial.isConnected, 10000);

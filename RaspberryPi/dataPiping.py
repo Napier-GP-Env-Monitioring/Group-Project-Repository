@@ -23,9 +23,9 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('0.0.0.0', UDP_PORT))
 
 # GPIO/SPI
-RESET_PIN = 22 # pin 22 (GPIO25)
+RESET_PIN = 25 # pin 22 (GPIO25)
 CS_PIN = 8 # pin 24 (CE0)
-DIO0_PIN = 24 # pin 18 (GPIO24)
+DIO0_PIN = 22 # pin 18 (GPIO22)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(DIO0_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) #
 spi = spidev.SpiDev()
