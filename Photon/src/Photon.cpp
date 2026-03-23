@@ -2,32 +2,15 @@
 #include <LoRa.h>
 #include "SparkFun_SHTC3.h"
 
-
 SHTC3 mySHTC3;
 uint packetLength = 3;
 bool loraReady = false;
-
-class Reciever {
-  public:
-    Reciever() {
-      payload = 
-    }
-    void recieve() {
-
-    }
-}
-
-class Transmitter {
-  public:
-    void transmit() {
-
-    }
-}
 
 void setup() {
   Serial.begin(115200);
   waitFor(Serial.isConnected, 10000);
   Wire.begin();
+  LoRa.setSyncWord(0x12);  // match the Pi
   Serial.println("Setup...");
   SPI.begin();
   LoRa.setPins(D10, D3, D2);
@@ -92,12 +75,20 @@ void loop() {
     Serial.println("Packet sent!");
 
     // 5.2 Wait
-    delay(1000);
+    // Poll for up to 10 seconds
+    unsigned long start = millis();
+    int packetSize = 0;
+    while (millis() - start < 10000) {
+      packetSize = LoRa.parsePacket();
+      if (packetSize > 0) break;
+      delay(10);
+    }
+
     // 5.3 Read from Raspberry Pi
     char received[64];
     
     int len = 0;
-    int packetSize = LoRa.parsePacket();
+    //int packetSize = LoRa.parsePacket();
     if (packetSize > 0) {
       while (LoRa.available() && len < 64) {
         received[len++] = (char)LoRa.read();
