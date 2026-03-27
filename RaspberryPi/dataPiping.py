@@ -65,7 +65,7 @@ class Receiver:
             # DEBUG
             print(f"IRQ: {irq}")
 
-            if irq & 0x40:  # RxDone
+            if irq & 0x40: # RxDone
                 length = spiRead(0x13)
 
                 currentAddr = spiRead(0x10)
