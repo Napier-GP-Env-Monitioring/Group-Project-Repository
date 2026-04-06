@@ -1,16 +1,29 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include "SparkFun_SHTC3.h"
+#include <Adafruit_GPS.h>
 
+#define GPSSerial Serial1
+
+Adafruit_GPS GPS(&GPSSerial1)
 SHTC3 mySHTC3;
 uint packetLength = 3;
 bool loraReady = false;
+uint8_t deviceID[12];
+
+void extractDeviceID(uint8_t* out) {
+    String id = System.deviceID();
+    for (int i=0; i<12; i++) {
+        String byteStr = id.substring(i*2, i*2+2);
+        out[i] = (uint8_t)strtol(byteStr.c_str(), NULL, 16);
+    }
+}
 
 void setup() {
   Serial.begin(115200);
   waitFor(Serial.isConnected, 10000);
   Wire.begin();
-  LoRa.setSyncWord(0x12);  // match the Pi
+  LoRa.setSyncWord(0x12); // match raspberry pi
   Serial.println("Setup...");
   SPI.begin();
   LoRa.setPins(D10, D3, D2);
@@ -21,21 +34,46 @@ void setup() {
       Serial.println("Transceiver start failed.");
   }
   mySHTC3.begin();
+  GPS.begin(115200)
 }
 
 void loop() {
-  // 1. Get humidity and temperature measurements
+  // MEASUREMENTS
   mySHTC3.update();
 
-  // 2. Validate & send message to serial monitor, accessed by command 'particle serial monitor'
-  if (mySHTC3.lastStatus == SHTC3_Status_Nominal) {
+  if (GPS.fix) {
+    Serial.println("GPS does not have a fix!");
+  } else {
+    try {
+      float longitudeRaw = GPS.longitude;
+      float latitudeRaw = GPS.latitude;
+
+      // Convert to decimal degrees
+      int longDegrees = (int)(longitudeRaw / 100);
+      float longMinutes = longitudeRaw - (degrees * 100);
+      float longDecimal = degrees + (minutes / 60.0);
+
+      int latDegrees = (int)(latitudeRaw / 100);
+      float latMinutes = latitudeRaw - (degrees * 100);
+      float latDecimal = degrees + (minutes / 60.0);
+
+      uint32_t longitude = (uint32_t)(longDecimal * 100000);
+      uint32_t latitude = (uint32_t)(latDecimal * 100000);
+    }
+    catch (...) {
+      Serial.println("Error while parsing GPS!");
+    }
+  }
+
+  // Validate & send message to serial monitor, accessed by command 'particle serial monitor'
+  if (mySHTC3.lastStatus == SHTC3_Status_Nominal) { // CHANGE!!!
     Serial.print("RH: ");
     Serial.print(mySHTC3.toPercent());
     Serial.print("%  Temp: ");
     Serial.print(mySHTC3.toDegC());
     Serial.println(" C");
   } else {
-    Serial.println("SHTC3 sensor error.");
+    Serial.println("Validation error!");
   }
 
   // 3. Payload Formatting
@@ -56,25 +94,45 @@ void loop() {
   Total = 33 Bytes + overhead
   */
 
+  extractDeviceID(deviceID);
+  uint32_t timestamp = Time.now();
   int16_t temperature = mySHTC3.toDegC() * 100;
   uint8_t humidity = (uint8_t)mySHTC3.toPercent();
 
-  uint8_t payload[3];
-  payload[0] = (temperature >> 8) & 0xFF;  // Temperature A
-  payload[1] = temperature & 0xFF;         // Temperature B
-  payload[2] = humidity & 0xFF;            // Humidity
+  uint8_t payload[20];
+  payload[0] = deviceID;
+  payload[1] = (timestamp >> 24) & 0xFF;
+  payload[2] = (timestamp >> 16) & 0xFF;
+  payload[3] = (timestamp >> 8) & 0xFF;
+  payload[4] = (timestamp >> 0) & 0xFF;
+  payload[5] = (temperature >> 8) & 0xFF; 
+  payload[6] = temperature & 0xFF;         
+  payload[7] = humidity & 0xFF;    
+ 
+  payload[8] = 0x00; // 8 PRESSURE
+  payload[9] = 0x00; // 9 PRESSURE
+  payload[10] = 0x00; // 10 SOIL MOISTURE
 
-  // 4. Save To Photon????
+  payload[11] = (latitude >> 16) & 0xFF;
+  payload[12] = (latitude >> 8) & 0xFF;
+  payload[13] = latitude & 0xFF;
+  payload[14] = (longitude>> 16) & 0xFF;
+  payload[15] = (longitude >> 8) & 0xFF;
+  payload[16] = longitude & 0xFF;
 
-  // 5. LoRa 
+  payload[17] = 0x00; // 18 FLAGS
+  payload[18] = 0x00; // 19 CRC/CHECKSUM 1
+  payload[19] = 0x00; // 20 CRC/CHECKSUM 2
+
+  // 4. LoRa 
   if (loraReady) {
-    // 5.1 Transmit packet
+    // 4.1 Transmit packet
     LoRa.beginPacket();
     LoRa.write(payload, sizeof(payload));
     LoRa.endPacket();
     Serial.println("Packet sent!");
 
-    // 5.2 Wait
+    // 4.2 Wait
     // Poll for up to 10 seconds
     unsigned long start = millis();
     int packetSize = 0;
@@ -84,7 +142,7 @@ void loop() {
       delay(10);
     }
 
-    // 5.3 Read from Raspberry Pi
+    // 4.3 Read from Raspberry Pi
     char received[64];
     
     int len = 0;
@@ -109,6 +167,6 @@ void loop() {
     Serial.println("Transmittion/Reception unavailable.");
   }
 
-  // 6. Sleep Logic (needs power management)
+  // 5. Sleep Logic (needs power management)
   delay(4000); // Sleep for 5s, consider using 'System.sleep(5)' as this turns the photon off.
 }

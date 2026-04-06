@@ -3,8 +3,15 @@ import time
 import RPi.GPIO as GPIO
 import socket
 
-# Global variables
-packetLength = 3
+'''
+
+HANDSHAKE PLAN
+
+1. Photon transmits ID and listens for Pi (random intervals as reliability bonus????)
+2. Pi records and sends acknowledgement, telling Photon to stop
+3. Pi continues to loop, requesting readings one at a time
+
+'''
 
 # UDP socket (for flask app)
 UDP_PORT = 540
@@ -65,7 +72,7 @@ class Receiver:
             # DEBUG
             print(f"IRQ: {irq}")
 
-            if irq & 0x40: # RxDone
+            if irq & 0x40:  # RxDone
                 length = spiRead(0x13)
 
                 currentAddr = spiRead(0x10)
@@ -84,14 +91,21 @@ class Receiver:
         return False
 
     def parsePayload(self):
-        if not self.payload or len(self.payload) < packetLength: # change one packet structure implemented
+        if not self.payload or len(self.payload) < 20:
             return None, None
 
-        rawTemperature = (self.payload[0] << 8) | self.payload[1]
-        temperature = rawTemperature / 100.0
-        humidity = self.payload[2]
+        deviceID = self.payload[0]
+        timestamp = (self.payload[1] << 24) | (self.payload[2] << 16) | (self.payload[3] << 8) | self.payload[4]
+        temperature = ((self.payload[5] << 8) | self.payload[6]) / 100.0
+        humidity = self.payload[7]
+        pressure = (self.payload[8] << 8) | self.payload[9]
+        soilMoisture = self.payload[10]
+        latitude = (self.payload[11] << 16) | (self.payload[12] << 8) | self.payload[13]
+        longitude = (self.payload[14] << 16) | (self.payload[15] << 8) | self.payload[16]
+        flags = self.payload[17]
+        crc = (self.payload[18] << 8) | self.payload[19]
 
-        return temperature, humidity
+        return deviceID, timestamp, temperature, humidity, pressure, soilMoisture, latitude, longitude, flags, crc
 
 class Transmitter:
     def __init__(self):
@@ -151,13 +165,16 @@ spiWrite(REG_OP_MODE, 0x85) # Continuous RX mode
 # -- main loop --
 receiver = Receiver()
 transmitter = Transmitter()
+deviceIDs = []
 def listeningLoop():
     while True:
         if receiver.receive():
-            temperature, humidity = receiver.parsePayload()
-
+            deviceID, timestamp, temperature, humidity, pressure, soilMoisture, latitude, longitude, flags, crc = receiver.parsePayload()
+            if not (deviceID in deviceIDs):
+                deviceIDs.append(deviceID)
+                print(f"Sensor registered {deviceID} as Device{len(deviceIDs)}")
             if temperature is not None:
-                message = f"RASPBERRY PI now has H={humidity}%, T={temperature}C"
+                message = f"PI recieved: TS={timestamp}, LAT={latitude}, LON={longitude}"
                 print("Transmission received, sending response...")
             else:
                 message = "Error - invalid payload"
