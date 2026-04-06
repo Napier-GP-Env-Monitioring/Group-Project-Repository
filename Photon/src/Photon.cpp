@@ -101,18 +101,18 @@ void loop() {
 
   uint8_t payload[31];
 
-  payload[0] = deviceID[0]
-  payload[1] = deviceID[1]
-  payload[2] = deviceID[2]
-  payload[3] = deviceID[3]
-  payload[4] = deviceID[4]
-  payload[5] = deviceID[5]
-  payload[6] = deviceID[6]
-  payload[7] = deviceID[7]
-  payload[8] = deviceID[8]
-  payload[9] = deviceID[9]
-  payload[10] = deviceID[10]
-  payload[11] = deviceID[11]
+  payload[0] = deviceID[0];
+  payload[1] = deviceID[1];
+  payload[2] = deviceID[2];
+  payload[3] = deviceID[3];
+  payload[4] = deviceID[4];
+  payload[5] = deviceID[5];
+  payload[6] = deviceID[6];
+  payload[7] = deviceID[7];
+  payload[8] = deviceID[8];
+  payload[9] = deviceID[9];
+  payload[10] = deviceID[10];
+  payload[11] = deviceID[11];
 
   payload[12] = (timestamp >> 24) & 0xFF;
   payload[13] = (timestamp >> 16) & 0xFF;
