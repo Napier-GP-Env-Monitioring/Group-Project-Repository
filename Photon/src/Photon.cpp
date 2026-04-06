@@ -5,11 +5,15 @@
 
 #define GPSSerial Serial1
 
-Adafruit_GPS GPS(&GPSSerial1)
+Adafruit_GPS GPS(&GPSSerial);
 SHTC3 mySHTC3;
 uint packetLength = 3;
 bool loraReady = false;
 uint8_t deviceID[12];
+
+
+uint32_t longitude;
+uint32_t latitude;
 
 void extractDeviceID(uint8_t* out) {
     String id = System.deviceID();
@@ -34,7 +38,7 @@ void setup() {
       Serial.println("Transceiver start failed.");
   }
   mySHTC3.begin();
-  GPS.begin(115200)
+  GPS.begin(115200);
 }
 
 void loop() {
@@ -42,29 +46,25 @@ void loop() {
   mySHTC3.update();
 
   if (GPS.fix) {
-    Serial.println("GPS does not have a fix!");
+    float longitudeRaw = GPS.longitude;
+    float latitudeRaw = GPS.latitude;
+
+    // Convert to decimal degrees
+    int longDegrees = (int)(longitudeRaw / 100);
+    float longMinutes = longitudeRaw - (longDegrees * 100);
+    float longDecimal = longDegrees + (longMinutes / 60.0);
+
+    int latDegrees = (int)(latitudeRaw / 100);
+    float latMinutes = latitudeRaw - (latDegrees * 100);
+    float latDecimal = latDegrees + (latMinutes / 60.0);
+
+    longitude = (uint32_t)(longDecimal * 100000);
+    latitude = (uint32_t)(latDecimal * 100000);
+
   } else {
-    try {
-      float longitudeRaw = GPS.longitude;
-      float latitudeRaw = GPS.latitude;
-
-      // Convert to decimal degrees
-      int longDegrees = (int)(longitudeRaw / 100);
-      float longMinutes = longitudeRaw - (degrees * 100);
-      float longDecimal = degrees + (minutes / 60.0);
-
-      int latDegrees = (int)(latitudeRaw / 100);
-      float latMinutes = latitudeRaw - (degrees * 100);
-      float latDecimal = degrees + (minutes / 60.0);
-
-      uint32_t longitude = (uint32_t)(longDecimal * 100000);
-      uint32_t latitude = (uint32_t)(latDecimal * 100000);
-    }
-    catch (...) {
-      Serial.println("Error while parsing GPS!");
-    }
+    Serial.println("GPS does not have a fix!");
   }
-
+  
   // Validate & send message to serial monitor, accessed by command 'particle serial monitor'
   if (mySHTC3.lastStatus == SHTC3_Status_Nominal) { // CHANGE!!!
     Serial.print("RH: ");
@@ -100,7 +100,7 @@ void loop() {
   uint8_t humidity = (uint8_t)mySHTC3.toPercent();
 
   uint8_t payload[20];
-  payload[0] = deviceID;
+  memcpy(&payload[0], deviceID, 12);
   payload[1] = (timestamp >> 24) & 0xFF;
   payload[2] = (timestamp >> 16) & 0xFF;
   payload[3] = (timestamp >> 8) & 0xFF;
@@ -116,7 +116,7 @@ void loop() {
   payload[11] = (latitude >> 16) & 0xFF;
   payload[12] = (latitude >> 8) & 0xFF;
   payload[13] = latitude & 0xFF;
-  payload[14] = (longitude>> 16) & 0xFF;
+  payload[14] = (longitude >> 16) & 0xFF;
   payload[15] = (longitude >> 8) & 0xFF;
   payload[16] = longitude & 0xFF;
 
