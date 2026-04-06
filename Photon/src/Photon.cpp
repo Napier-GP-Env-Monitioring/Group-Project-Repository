@@ -91,7 +91,7 @@ void loop() {
   CRC / Checksum = 2B
 
 
-  Total = 33 Bytes + overhead
+  Total = 31 Bytes + overhead
   */
 
   extractDeviceID(deviceID);
@@ -99,30 +99,43 @@ void loop() {
   int16_t temperature = mySHTC3.toDegC() * 100;
   uint8_t humidity = (uint8_t)mySHTC3.toPercent();
 
-  uint8_t payload[20];
-  memcpy(&payload[0], deviceID, 12);
-  payload[1] = (timestamp >> 24) & 0xFF;
-  payload[2] = (timestamp >> 16) & 0xFF;
-  payload[3] = (timestamp >> 8) & 0xFF;
-  payload[4] = (timestamp >> 0) & 0xFF;
-  payload[5] = (temperature >> 8) & 0xFF; 
-  payload[6] = temperature & 0xFF;         
-  payload[7] = humidity & 0xFF;    
+  uint8_t payload[31];
+
+  payload[0] = deviceID[0]
+  payload[1] = deviceID[1]
+  payload[2] = deviceID[2]
+  payload[3] = deviceID[3]
+  payload[4] = deviceID[4]
+  payload[5] = deviceID[5]
+  payload[6] = deviceID[6]
+  payload[7] = deviceID[7]
+  payload[8] = deviceID[8]
+  payload[9] = deviceID[9]
+  payload[10] = deviceID[10]
+  payload[11] = deviceID[11]
+
+  payload[12] = (timestamp >> 24) & 0xFF;
+  payload[13] = (timestamp >> 16) & 0xFF;
+  payload[14] = (timestamp >> 8) & 0xFF;
+  payload[15] = (timestamp >> 0) & 0xFF;
+  payload[16] = (temperature >> 8) & 0xFF; 
+  payload[17] = temperature & 0xFF;         
+  payload[18] = humidity & 0xFF;    
  
-  payload[8] = 0x00; // 8 PRESSURE
-  payload[9] = 0x00; // 9 PRESSURE
-  payload[10] = 0x00; // 10 SOIL MOISTURE
+  payload[19] = 0x00; // 8 PRESSURE
+  payload[20] = 0x00; // 9 PRESSURE
+  payload[21] = 0x00; // 10 SOIL MOISTURE
 
-  payload[11] = (latitude >> 16) & 0xFF;
-  payload[12] = (latitude >> 8) & 0xFF;
-  payload[13] = latitude & 0xFF;
-  payload[14] = (longitude >> 16) & 0xFF;
-  payload[15] = (longitude >> 8) & 0xFF;
-  payload[16] = longitude & 0xFF;
+  payload[22] = (latitude >> 16) & 0xFF;
+  payload[23] = (latitude >> 8) & 0xFF;
+  payload[24] = latitude & 0xFF;
+  payload[25] = (longitude >> 16) & 0xFF;
+  payload[26] = (longitude >> 8) & 0xFF;
+  payload[27] = longitude & 0xFF;
 
-  payload[17] = 0x00; // 18 FLAGS
-  payload[18] = 0x00; // 19 CRC/CHECKSUM 1
-  payload[19] = 0x00; // 20 CRC/CHECKSUM 2
+  payload[28] = 0x00; // 18 FLAGS
+  payload[29] = 0x00; // 19 CRC/CHECKSUM 1
+  payload[30] = 0x00; // 20 CRC/CHECKSUM 2
 
   // 4. LoRa 
   if (loraReady) {

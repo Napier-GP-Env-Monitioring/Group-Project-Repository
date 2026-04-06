@@ -19,9 +19,9 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(('0.0.0.0', UDP_PORT))
 
 # GPIO/SPI
-RESET_PIN = 22
+RESET_PIN = 25
 CS_PIN = 8
-DIO0_PIN = 24
+DIO0_PIN = 22
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(DIO0_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
@@ -91,20 +91,26 @@ class Receiver:
         return False
 
     def parsePayload(self):
-        if not self.payload or len(self.payload) < 20:
+        if not self.payload or len(self.payload) < 31:
             return None, None
+        
+        deviceID = bytearray()
+        i = 0
+        while (i < 12):
+            deviceID += self.payload[i]
+            i += 1
 
-        deviceID = self.payload[0]
-        timestamp = (self.payload[1] << 24) | (self.payload[2] << 16) | (self.payload[3] << 8) | self.payload[4]
-        temperature = ((self.payload[5] << 8) | self.payload[6]) / 100.0
-        humidity = self.payload[7]
-        pressure = (self.payload[8] << 8) | self.payload[9]
-        soilMoisture = self.payload[10]
-        latitude = (self.payload[11] << 16) | (self.payload[12] << 8) | self.payload[13]
-        longitude = (self.payload[14] << 16) | (self.payload[15] << 8) | self.payload[16]
-        flags = self.payload[17]
-        crc = (self.payload[18] << 8) | self.payload[19]
+        timestamp = (self.payload[12] << 24) | (self.payload[13] << 16) | (self.payload[14] << 8) | self.payload[15]
+        temperature = ((self.payload[16] << 8) | self.payload[17]) / 100.0
+        humidity = self.payload[18]
+        pressure = (self.payload[19] << 8) | self.payload[20]
+        soilMoisture = self.payload[21]
+        latitude = (self.payload[22] << 16) | (self.payload[23] << 8) | self.payload[24]
+        longitude = (self.payload[25] << 16) | (self.payload[26] << 8) | self.payload[27]
+        flags = self.payload[28]
+        crc = (self.payload[29] << 8) | self.payload[30]
 
+        print(deviceID)
         return deviceID, timestamp, temperature, humidity, pressure, soilMoisture, latitude, longitude, flags, crc
 
 class Transmitter:
@@ -174,7 +180,7 @@ def listeningLoop():
                 deviceIDs.append(deviceID)
                 print(f"Sensor registered {deviceID} as Device{len(deviceIDs)}")
             if temperature is not None:
-                message = f"PI recieved: TS={timestamp}, LAT={latitude}, LON={longitude}"
+                message = f"PI recieved: TS={timestamp}, LAT={latitude}, LON={longitude}" # causes error: Response Recieved! - Message: iӵ0u$
                 print("Transmission received, sending response...")
             else:
                 message = "Error - invalid payload"
