@@ -94,10 +94,10 @@ class Receiver:
         if not self.payload or len(self.payload) < 31:
             return None, None
         
-        deviceID = bytearray()
+        deviceID = ''
         i = 0
         while (i < 12):
-            deviceID += self.payload[i]
+            deviceID += str(self.payload[i])
             i += 1
 
         timestamp = (self.payload[12] << 24) | (self.payload[13] << 16) | (self.payload[14] << 8) | self.payload[15]
