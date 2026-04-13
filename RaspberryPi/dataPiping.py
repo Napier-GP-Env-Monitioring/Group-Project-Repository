@@ -44,13 +44,10 @@ def spi_read(register):
     return response[1]
 
 def spi_write(register, value):
-    if isinstance(value, str):
-        value = bytes.fromhex(value)
-
-    if isinstance(value, (bytes, bytearray)):
-        spi.xfer2([register | 0x80] +list[value])
+    if isinstance(value, (bytes, bytearray, list)):
+        spi.xfer2([register | 0x80] + list(value))
     else:
-        spi.xfer2([register | 0x80, int(value) ])
+        spi.xfer2([register | 0x80, int(value)])
 
 def reset_module():
     GPIO.setup(RESET_PIN, GPIO.OUT)
