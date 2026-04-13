@@ -254,10 +254,11 @@ void setup() {
 
 void loop() {
   myMeasurements.ReadGPS(); // continuously update GPS or will not work, CHECK ----------------------
-    if (millis() - lastRun > 100) {
+    if (millis() - lastRun > 100) { // every 0.1s
       lastRun = millis();
 
-      if (myReceiver.Receive(0.5)) {
+      bool match = myReceiver.Receive(0.2);
+      if (match && myReceiver.getStatus() == 4) { // if raspberry is talking to this device AND is requesting data (status 4)
         myMeasurements.ReadAll();
         myTransmitter.FormatPayload(myMeasurements);
         myTransmitter.Transmit();
