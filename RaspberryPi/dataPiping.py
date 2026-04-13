@@ -189,7 +189,10 @@ def check_node_registered(device_id): # Check for new node, register if new
     global deviceIDs
     if device_id not in device_ids:
         print(f"Node registered {device_id} as Device{len(device_ids)}")
-        transmitter.format_payload(device_id, 2) # 2 = Acknowledge
+        start = time.time()
+        while time.time() - start < 5:
+            transmitter.format_payload(device_id, 2) # 2 = Acknowledge
+        # ADD EXTRA CHECK HERE IF NECESSARY --------------------------------------------------------
         device_ids.append(device_id)
 
 def main_loop():

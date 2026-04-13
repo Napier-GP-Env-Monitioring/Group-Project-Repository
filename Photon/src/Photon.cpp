@@ -103,6 +103,7 @@ class Measurements {
 class Transmitter {
   private:
     uint8_t payload[31];
+    uint8_t flag = 0;
 
   public:
     void Transmit() {
@@ -216,6 +217,10 @@ class Receiver {
     }
 };
 
+Measurements myMeasurements;
+Transmitter myTransmitter;
+Receiver myReceiver;
+
 void setup() {
   Serial.begin(115200);
   Serial1.begin(9600);
@@ -236,25 +241,30 @@ void setup() {
   GPS.begin(9600);
 
   // connect to pi ----------------------------------------------------------------
-
-
-};
-
-Measurements myMeasurements;
-Transmitter myTransmitter;
-Receiver myReceiver;
+  Serial.println("Trying to connect to base node...");
+  bool connected = false;
+  while (!connected) {
+    myTransmitter.Transmit();
+    myReceiver.Receive();
+    if (myReceiver.getStatus() == 2) { // if raspberry pi sends acknowledgement
+      connected = true;
+      Serial.println("Connected to base node!");
+    }
+  }
+}
 
 void loop() {
-  //if (myReceiver.Receive()) { // listen for signal, return TRUE if signal is meant for this device
+  myMeasurements.ReadGPS(); // continuously update GPS or will not work, CHECK ----------------------
 
-  myMeasurements.ReadGPS(); // continuously update GPS or will not work
+  if (myReceiver.Receive()) { // listen for signal, return TRUE if signal is meant for this device
 
-  static unsigned long lastRun = 0; // Run every 5s
-  if (millis() - lastRun > 5000) {
-    lastRun = millis();
+    static unsigned long lastRun = 0; // Run every 5s
+    if (millis() - lastRun > 5000) {
+      lastRun = millis();
 
-    myMeasurements.ReadAll();
-    myTransmitter.FormatPayload(myMeasurements);
-    myTransmitter.Transmit();
+      myMeasurements.ReadAll();
+      myTransmitter.FormatPayload(myMeasurements);
+      myTransmitter.Transmit();
+    }
   }
 }
