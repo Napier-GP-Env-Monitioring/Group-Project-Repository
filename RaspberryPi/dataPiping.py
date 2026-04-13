@@ -44,7 +44,13 @@ def spi_read(register):
     return response[1]
 
 def spi_write(register, value):
-    spi.xfer2([register | 0x80, value])
+    if isinstance(value, str):
+        value = bytes.fromhex(value)
+
+    if isinstance(value, (bytes, bytearray)):
+        spi.xfer2([register | 0x80] +list[value])
+    else:
+        spi.xfer2([register | 0x80, int(value) ])
 
 def reset_module():
     GPIO.setup(RESET_PIN, GPIO.OUT)
@@ -79,6 +85,8 @@ class Receiver:
                 spi_write(0x0D, current_addr)
 
                 self.payload = [spi_read(0x00) for _ in range(length)]
+                if all(b == 0 for b in self.payload):
+                    return
                 print("Packet received!")
                 print("RAW:", self.payload)
 
@@ -208,7 +216,7 @@ def main_loop():
                             print("Sending confirmation...")
                             transmitter.format_payload(id, 1) # 1 = Success
                             success = True
-                        else:
+                        elif device_id != 00000000:
                             check_node_registered(device_id)
                     else:
                         print("No message received!")
