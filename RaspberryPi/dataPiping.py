@@ -4,13 +4,11 @@ import RPi.GPIO as GPIO
 import socket
 
 '''
-
 HANDSHAKE PLAN
 
 1. Photon transmits ID and listens for Pi (random intervals as reliability bonus????)
 2. Pi records and sends acknowledgement, telling Photon to stop
 3. Pi continues to loop, requesting readings one at a time
-
 '''
 
 # UDP socket (for flask app)
@@ -196,31 +194,35 @@ def check_node_registered(device_id): # Check for new node, register if new
         print(f"Node registered {device_id} as Device{len(device_ids)+1}")
         start = time.time()
         while time.time() - start < 5:
-            transmitter.format_payload(device_id, 2) # 2 = Acknowledge
+            transmitter.format_payload(device_id, 2) # 2 = Acknowledged
         # ADD EXTRA CHECK HERE IF NECESSARY --------------------------------------------------------
         device_ids.append(device_id)
 
 def main_loop():
     while True: # MAIN
         if len(device_ids) > 0:
-            for id in device_ids: # Cycle through each node using their ID, receive measurements one node at a timne 
+            for id in device_ids: # Cycle through each node using their ID, receive measurements one node at a time 
+
+                # 1. request data from Photon
+                transmitter.format_payload(id, 4) # 4 = request packet
+                transmitter.transmit
+
+                # 2. listen for response
                 success = False
-                while not success: # Retry if unsuccessful
+                attempts = 0
+                while (not success) and (attempts < 10): # Retry if unsuccessful
                     if receiver.receive():
                         device_id, timestamp, temperature, humidity, pressure, soil_moisture, latitude, longitude, flags, crc = receiver.parsePayload()
-
                         if id == device_id:
                             print("Sending confirmation...")
                             transmitter.format_payload(id, 1) # 1 = Success
                             success = True
-                        elif device_id != 00000000:
-                            check_node_registered(device_id)
-                    else:
-                        print("No message received!")
-                        transmitter.format_payload(id, 0) # 0 = Fail
-                    transmitter.transmit()
-
-                    time.sleep(0.5)
+                if (not success):
+                    print("No message received!")
+                    transmitter.format_payload(id, 0) # 0 = Fail
+                    
+                transmitter.transmit()
+                time.sleep(0.1)
         else:
             if receiver.receive():
                 deviceID, *_ = receiver.parse_payload()

@@ -50,7 +50,7 @@ class Measurements {
     }
 
     void ReadSHTC3() {
-      mySHTC3.update(); // GLOBAL ?????? --------------------------------------------------------------------------------------------------------------------------
+      mySHTC3.update();
       if (mySHTC3.lastStatus == SHTC3_Status_Nominal) {
         temperature = mySHTC3.toDegC() * 100;
         humidity = (uint8_t)mySHTC3.toPercent();
@@ -166,7 +166,7 @@ class Transmitter {
       payload[26] = (longitude >> 8) & 0xFF;
       payload[27] = longitude & 0xFF;
 
-      payload[28] = 0x00; // 18 FLAGS ----------------------------------------------------------------------------
+      payload[28] = 0x00; // 18 FLAGS
       payload[29] = 0x00; // 19 CRC/CHECKSUM 1
       payload[30] = 0x00; // 20 CRC/CHECKSUM 2
     }
@@ -180,18 +180,17 @@ class Receiver {
     const uint8_t* getPiDeviceID() const { return piDeviceID; }
     uint8_t getStatus() const { return status; }
       
-    bool Receive() {
+    bool Receive(float duration) {
       uint8_t received[13];
       int len = 0;
       bool isMatch = false;
 
-      // Wait, poll for up to 10 seconds
+      // Wait, poll for duration
       unsigned long start = millis();
       int packetSize = 0;
-      while (millis() - start < 2000) {
+      while (millis() - start < (int)(duration*1000)) {
         packetSize = LoRa.parsePacket();
         if (packetSize > 0) break;
-        delay(2);
       }
 
       if (packetSize > 0) { // If packet isn't empty
@@ -199,7 +198,7 @@ class Receiver {
           received[len++] = (uint8_t)LoRa.read();
         }
         
-        memcpy(piDeviceID, received, 12); // error? -----------------------------------------
+        memcpy(piDeviceID, received, 12);-
         status = received[12];
 
         isMatch = true;
@@ -240,12 +239,12 @@ void setup() {
   mySHTC3.begin(); // add error handling here
   GPS.begin(9600);
 
-  // connect to pi ----------------------------------------------------------------
+  // connect to pi
   Serial.println("Trying to connect to base node...");
   bool connected = false;
   while (!connected) {
-    myTransmitter.Transmit();
-    myReceiver.Receive();
+    myTransmitter.Transmit(myMeasurements);
+    myReceiver.Receive(0.5);
     if (myReceiver.getStatus() == 2) { // if raspberry pi sends acknowledgement
       connected = true;
       Serial.println("Connected to base node!");
@@ -255,16 +254,13 @@ void setup() {
 
 void loop() {
   myMeasurements.ReadGPS(); // continuously update GPS or will not work, CHECK ----------------------
-
-  if (myReceiver.Receive()) { // listen for signal, return TRUE if signal is meant for this device
-
-    static unsigned long lastRun = 0; // Run every 5s
-    if (millis() - lastRun > 5000) {
+    if (millis() - lastRun > 100) {
       lastRun = millis();
 
-      myMeasurements.ReadAll();
-      myTransmitter.FormatPayload(myMeasurements);
-      myTransmitter.Transmit();
+      if (myReceiver.Receive(0.5)) {
+        myMeasurements.ReadAll();
+        myTransmitter.FormatPayload(myMeasurements);
+        myTransmitter.Transmit();
+      }
     }
-  }
 }
