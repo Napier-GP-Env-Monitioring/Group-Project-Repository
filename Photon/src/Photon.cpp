@@ -188,10 +188,10 @@ class Receiver {
       // Wait, poll for up to 10 seconds
       unsigned long start = millis();
       int packetSize = 0;
-      while (millis() - start < 10000) {
+      while (millis() - start < 2000) {
         packetSize = LoRa.parsePacket();
         if (packetSize > 0) break;
-        delay(10);
+        delay(2);
       }
 
       if (packetSize > 0) { // If packet isn't empty
