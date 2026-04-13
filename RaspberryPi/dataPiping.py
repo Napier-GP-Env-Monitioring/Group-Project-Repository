@@ -226,7 +226,7 @@ def main_loop():
                     time.sleep(0.5)
         else:
             if receiver.receive():
-                deviceID, *_ = receiver.parsePayload()
+                deviceID, *_ = receiver.parse_payload()
                 check_node_registered(deviceID)
                 transmitter.transmit()
 
