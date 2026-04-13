@@ -115,7 +115,7 @@ class Receiver:
 
 class Transmitter:
     def __init__(self):
-        self.payload = []
+        self.payload = []*13
 
     def transmit(self):
         spi_write(0x0D, 0x00) # reset FIFO pointer
