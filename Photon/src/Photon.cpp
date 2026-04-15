@@ -198,7 +198,7 @@ class Receiver {
           received[len++] = (uint8_t)LoRa.read();
         }
         
-        memcpy(piDeviceID, received, 12);-
+        memcpy(piDeviceID, received, 12);
         status = received[12];
 
         isMatch = true;
@@ -243,7 +243,8 @@ void setup() {
   Serial.println("Trying to connect to base node...");
   bool connected = false;
   while (!connected) {
-    myTransmitter.Transmit(myMeasurements);
+    myTransmitter.FormatPayload(myMeasurements);
+    myTransmitter.Transmit();
     myReceiver.Receive(0.5);
     if (myReceiver.getStatus() == 2) { // if raspberry pi sends acknowledgement
       connected = true;
@@ -252,6 +253,7 @@ void setup() {
   }
 }
 
+unsigned long lastRun = 0;
 void loop() {
   myMeasurements.ReadGPS(); // continuously update GPS or will not work, CHECK ----------------------
     if (millis() - lastRun > 100) { // every 0.1s
