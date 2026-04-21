@@ -1,0 +1,357 @@
+import spidev
+import time
+import RPi.GPIO as GPIO
+import sqlite3
+
+"""
+Protocol
+
+Control packet (13 bytes)
+- 0..11  device_id (12 raw bytes)
+- 12     status
+
+Data packet (31 bytes)
+- 0..11  device_id (12 raw bytes)
+- 12..15 timestamp (uint32)
+- 16..17 temperature x100 (int16)
+- 18     humidity (uint8)
+- 19..20 pressure (uint16)
+- 21     soil moisture (uint8)
+- 22..24 latitude (uint24 scaled)
+- 25..27 longitude (uint24 scaled)
+- 28     flags (uint8)
+- 29..30 crc/checksum placeholder (uint16)
+"""
+
+# -----------------------------
+# GPIO / SPI config
+# -----------------------------
+RESET_PIN = 25
+CS_PIN = 8
+DIO0_PIN = 22
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(DIO0_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+
+spi = spidev.SpiDev()
+spi.open(0, 0)
+spi.max_speed_hz = 500000
+
+# -----------------------------
+# LoRa registers
+# -----------------------------
+REG_FIFO = 0x00
+REG_OP_MODE = 0x01
+REG_FRF_MSB = 0x06
+REG_FRF_MID = 0x07
+REG_FRF_LSB = 0x08
+REG_FIFO_ADDR_PTR = 0x0D
+REG_FIFO_TX_BASE_ADDR = 0x0E
+REG_FIFO_RX_BASE_ADDR = 0x0F
+REG_FIFO_RX_CURRENT_ADDR = 0x10
+REG_RX_NB_BYTES = 0x13
+REG_IRQ_FLAGS = 0x12
+REG_PAYLOAD_LENGTH = 0x22
+REG_MODEM_CONFIG_1 = 0x1D
+REG_MODEM_CONFIG_2 = 0x1E
+REG_MODEM_CONFIG_3 = 0x26
+REG_VERSION = 0x42
+REG_SYNC_WORD = 0x39
+REG_DIO_MAPPING_1 = 0x40
+REG_LNA = 0x0C
+
+MODE_LONG_RANGE = 0x80
+MODE_SLEEP = 0x00
+MODE_STDBY = 0x01
+MODE_TX = 0x03
+MODE_RX_CONTINUOUS = 0x05
+
+IRQ_RX_DONE = 0x40
+IRQ_TX_DONE = 0x08
+IRQ_PAYLOAD_CRC_ERROR = 0x20
+
+STATUS_FAIL = 0
+STATUS_SUCCESS = 1
+STATUS_REGISTER_ACK = 2
+STATUS_REQUEST_READING = 4
+
+CONTROL_PACKET_LEN = 13
+DATA_PACKET_LEN = 31
+
+# -----------------------------
+# Helpers
+# -----------------------------
+def spi_read(register):
+    response = spi.xfer2([register & 0x7F, 0x00])
+    return response[1]
+
+def spi_write(register, value):
+    if isinstance(value, (bytes, bytearray, list)):
+        spi.xfer2([register | 0x80] + list(value))
+    else:
+        spi.xfer2([register | 0x80, int(value)])
+
+def reset_module():
+    GPIO.setup(RESET_PIN, GPIO.OUT)
+    GPIO.output(RESET_PIN, GPIO.LOW)
+    time.sleep(0.05)
+    GPIO.output(RESET_PIN, GPIO.HIGH)
+    time.sleep(0.1)
+
+def set_frequency(frequency_mhz):
+    frf = int(frequency_mhz * 1000000.0 / 61.03515625)
+    spi_write(REG_FRF_MSB, (frf >> 16) & 0xFF)
+    spi_write(REG_FRF_MID, (frf >> 8) & 0xFF)
+    spi_write(REG_FRF_LSB, frf & 0xFF)
+
+def device_id_to_hex(device_id_bytes):
+    return "".join(f"{b:02X}" for b in device_id_bytes)
+
+def write_to_db(device_id_hex, ts, t, h, p, sm, lat, lon):
+    with sqlite3.connect("database/envMonDB.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO readings
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (device_id_hex, ts, t, h, p, sm, lat, lon)
+        )
+        conn.commit()
+
+# -----------------------------
+# Packet parsing
+# -----------------------------
+def parse_control_packet(payload):
+    if payload is None or len(payload) != CONTROL_PACKET_LEN:
+        return None
+
+    device_id = bytes(payload[0:12])
+    status = payload[12]
+    return device_id, status
+
+def parse_data_packet(payload):
+    if payload is None or len(payload) != DATA_PACKET_LEN:
+        return None
+
+    device_id = bytes(payload[0:12])
+
+    timestamp = (
+        (payload[12] << 24)
+        | (payload[13] << 16)
+        | (payload[14] << 8)
+        | payload[15]
+    )
+
+    raw_temp = (payload[16] << 8) | payload[17]
+    if raw_temp & 0x8000:
+        raw_temp -= 0x10000
+    temperature = raw_temp / 100.0
+
+    humidity = payload[18]
+    pressure = (payload[19] << 8) | payload[20]
+    soil_moisture = payload[21]
+
+    lat_raw = (payload[22] << 16) | (payload[23] << 8) | payload[24]
+    lon_raw = (payload[25] << 16) | (payload[26] << 8) | payload[27]
+
+    latitude = (lat_raw * 180.0 / 16777215.0) - 90.0
+    longitude = (lon_raw * 360.0 / 16777215.0) - 180.0
+
+    flags = payload[28]
+    crc = (payload[29] << 8) | payload[30]
+
+    return {
+        "device_id": device_id,
+        "timestamp": timestamp,
+        "temperature": temperature,
+        "humidity": humidity,
+        "pressure": pressure,
+        "soil_moisture": soil_moisture,
+        "latitude": latitude,
+        "longitude": longitude,
+        "flags": flags,
+        "crc": crc,
+    }
+
+# -----------------------------
+# LoRa device classes
+# -----------------------------
+class Receiver:
+    def __init__(self):
+        self.payload = None
+
+    def receive(self, timeout=5.0):
+        start_time = time.time()
+
+        while (time.time() - start_time) < timeout:
+            irq = spi_read(REG_IRQ_FLAGS)
+
+            if irq & IRQ_PAYLOAD_CRC_ERROR:
+                spi_write(REG_IRQ_FLAGS, 0xFF)
+                print("CRC error on received packet")
+                time.sleep(0.05)
+                continue
+
+            if irq & IRQ_RX_DONE:
+                length = spi_read(REG_RX_NB_BYTES)
+                current_addr = spi_read(REG_FIFO_RX_CURRENT_ADDR)
+                spi_write(REG_FIFO_ADDR_PTR, current_addr)
+
+                self.payload = [spi_read(REG_FIFO) for _ in range(length)]
+                spi_write(REG_IRQ_FLAGS, 0xFF)
+
+                if not self.payload:
+                    return False
+
+                print(f"Packet received ({length} bytes): {self.payload}")
+                return True
+
+            time.sleep(0.05)
+
+        return False
+
+class Transmitter:
+    def __init__(self):
+        self.payload = [0] * CONTROL_PACKET_LEN
+
+    def format_control_packet(self, device_id, status):
+        if len(device_id) != 12:
+            raise ValueError("device_id must be exactly 12 bytes")
+
+        self.payload = list(device_id) + [status]
+
+    def transmit(self):
+        spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_STDBY)
+        spi_write(REG_FIFO_ADDR_PTR, 0x00)
+
+        for b in self.payload:
+            spi_write(REG_FIFO, b)
+
+        spi_write(REG_PAYLOAD_LENGTH, len(self.payload))
+        spi_write(REG_IRQ_FLAGS, 0xFF)
+        spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_TX)
+
+        while not (spi_read(REG_IRQ_FLAGS) & IRQ_TX_DONE):
+            time.sleep(0.01)
+
+        spi_write(REG_IRQ_FLAGS, 0xFF)
+        spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_RX_CONTINUOUS)
+
+# -----------------------------
+# LoRa init
+# -----------------------------
+def init_lora():
+    reset_module()
+
+    version = spi_read(REG_VERSION)
+    if version != 0x12:
+        raise RuntimeError(f"Failed to detect RFM9x. Version read: 0x{version:X}")
+
+    print(f"RFM9x detected. Version: 0x{version:X}")
+
+    spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_SLEEP)
+    time.sleep(0.01)
+    spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_STDBY)
+    time.sleep(0.01)
+
+    set_frequency(868.0)
+
+    spi_write(REG_FIFO_TX_BASE_ADDR, 0x00)
+    spi_write(REG_FIFO_RX_BASE_ADDR, 0x00)
+
+    spi_write(REG_LNA, 0x23)
+    spi_write(REG_MODEM_CONFIG_1, 0x72)   # BW 125kHz, CR 4/5
+    spi_write(REG_MODEM_CONFIG_2, 0x74)   # SF7, CRC on
+    spi_write(REG_MODEM_CONFIG_3, 0x04)
+    spi_write(REG_SYNC_WORD, 0x12)
+    spi_write(REG_DIO_MAPPING_1, 0x00)
+    spi_write(REG_IRQ_FLAGS, 0xFF)
+
+    spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_RX_CONTINUOUS)
+
+# -----------------------------
+# Hub logic
+# -----------------------------
+receiver = Receiver()
+transmitter = Transmitter()
+registered_nodes = []
+
+def register_node(device_id):
+    if device_id in registered_nodes:
+        return
+
+    print(f"Registering node {device_id_to_hex(device_id)}")
+    transmitter.format_control_packet(device_id, STATUS_REGISTER_ACK)
+
+    for _ in range(5):
+        transmitter.transmit()
+        time.sleep(0.5)
+
+    registered_nodes.append(device_id)
+    print(f"Registered node {device_id_to_hex(device_id)}")
+
+def poll_node(device_id):
+    transmitter.format_control_packet(device_id, STATUS_REQUEST_READING)
+    transmitter.transmit()
+
+    attempts = 0
+    while attempts < 10:
+        attempts += 1
+
+        if receiver.receive(timeout=2.0):
+            parsed = parse_data_packet(receiver.payload)
+            if parsed is None:
+                continue
+
+            if parsed["device_id"] != device_id:
+                print("Received packet from different node, ignoring")
+                continue
+
+            device_hex = device_id_to_hex(parsed["device_id"])
+            print(f"Reading received from {device_hex}")
+            print(parsed)
+
+            write_to_db(
+                device_hex,
+                parsed["timestamp"],
+                parsed["temperature"],
+                parsed["humidity"],
+                parsed["pressure"],
+                parsed["soil_moisture"],
+                parsed["latitude"],
+                parsed["longitude"],
+            )
+
+            transmitter.format_control_packet(device_id, STATUS_SUCCESS)
+            transmitter.transmit()
+            return True
+
+    print(f"No valid response from {device_id_to_hex(device_id)}")
+    transmitter.format_control_packet(device_id, STATUS_FAIL)
+    transmitter.transmit()
+    return False
+
+def main_loop():
+    while True:
+        if registered_nodes:
+            for device_id in list(registered_nodes):
+                poll_node(device_id)
+                time.sleep(0.2)
+        else:
+            if receiver.receive(timeout=5.0):
+                parsed = parse_data_packet(receiver.payload)
+                if parsed is None:
+                    continue
+
+                register_node(parsed["device_id"])
+
+if __name__ == "__main__":
+    try:
+        init_lora()
+        main_loop()
+    except KeyboardInterrupt:
+        print("Exiting...")
+    finally:
+        spi.close()
+        GPIO.cleanup()
