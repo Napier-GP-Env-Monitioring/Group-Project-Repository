@@ -1,3 +1,4 @@
+import os
 import spidev
 import time
 import RPi.GPIO as GPIO
@@ -44,6 +45,12 @@ GPIO.setup(DIO0_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 spi = spidev.SpiDev()
 spi.open(0, 0)
 spi.max_speed_hz = 500000
+
+# -----------------------------
+# Database
+# -----------------------------
+DB_DIR = "database"
+DB_PATH = os.path.join(DB_DIR, "envMonDB.db")
 
 # -----------------------------
 # LoRa registers
@@ -113,19 +120,53 @@ def set_frequency(frequency_mhz):
     spi_write(REG_FRF_LSB, frf & 0xFF)
 
 # -----------------------------
+# Database helpers
+# -----------------------------
+def init_database():
+    os.makedirs(DB_DIR, exist_ok=True)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS readings (
+                device_id TEXT,
+                timestamp INTEGER,
+                temperature REAL,
+                humidity INTEGER,
+                pressure INTEGER,
+                soil_moisture INTEGER,
+                latitude REAL,
+                longitude REAL
+            )
+        """)
+        conn.commit()
+
+    print(f"Database ready at: {os.path.abspath(DB_PATH)}")
+
+def write_to_db(device_id_hex, ts, t, h, p, sm, lat, lon):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO readings (
+                device_id,
+                timestamp,
+                temperature,
+                humidity,
+                pressure,
+                soil_moisture,
+                latitude,
+                longitude
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (device_id_hex, ts, t, h, p, sm, lat, lon))
+        conn.commit()
+
+    print(f"Saved reading for {device_id_hex}")
+
+# -----------------------------
 # Utility
 # -----------------------------
 def device_id_to_hex(device_id):
     return "".join(f"{b:02X}" for b in device_id)
-
-def write_to_db(device_id_hex, ts, t, h, p, sm, lat, lon):
-    with sqlite3.connect("database/envMonDB.db") as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO readings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (device_id_hex, ts, t, h, p, sm, lat, lon)
-        )
-        conn.commit()
 
 # -----------------------------
 # Packet parsing
@@ -350,6 +391,7 @@ def main_loop():
 if __name__ == "__main__":
     try:
         init_lora()
+        init_database()
         main_loop()
     except KeyboardInterrupt:
         print("Exiting...")
