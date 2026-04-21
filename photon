@@ -85,11 +85,11 @@ class Measurements {
     }
 
     void readPressure() {
-        pressure = 0; // placeholder
+        pressure = 0;
     }
 
     void readSoilMoisture() {
-        soilMoisture = 0; // placeholder
+        soilMoisture = 0;
     }
 
     void readAll() {
@@ -167,35 +167,69 @@ class Receiver {
         while (millis() - start < (unsigned long)(durationSeconds * 1000.0f)) {
             packetSize = LoRa.parsePacket();
             if (packetSize > 0) {
+                Serial.print("Received packetSize: ");
+                Serial.println(packetSize);
                 break;
             }
         }
 
-        if (packetSize != CONTROL_PACKET_LEN) {
-            if (packetSize > 0) {
-                while (LoRa.available()) {
-                    LoRa.read();
-                }
-            }
+        if (packetSize <= 0) {
+            Serial.println("No control packet received");
             return false;
         }
 
         int len = 0;
-        while (LoRa.available() && len < CONTROL_PACKET_LEN) {
-            packet[len++] = (uint8_t)LoRa.read();
+        while (LoRa.available() && len < packetSize) {
+            if (len < (int)CONTROL_PACKET_LEN) {
+                packet[len] = (uint8_t)LoRa.read();
+            } else {
+                LoRa.read();
+            }
+            len++;
         }
 
-        if (len != CONTROL_PACKET_LEN) {
+        Serial.print("Control bytes: ");
+        for (int i = 0; i < len && i < (int)CONTROL_PACKET_LEN; i++) {
+            Serial.print(packet[i], HEX);
+            Serial.print(" ");
+        }
+        Serial.println();
+
+        if (packetSize != CONTROL_PACKET_LEN || len < (int)CONTROL_PACKET_LEN) {
+            Serial.println("Wrong control packet length");
             return false;
         }
 
+        bool idMatch = true;
         for (int i = 0; i < 12; i++) {
             if (packet[i] != deviceID[i]) {
-                return false;
+                idMatch = false;
             }
         }
 
+        Serial.print("My ID: ");
+        for (int i = 0; i < 12; i++) {
+            Serial.print(deviceID[i], HEX);
+            Serial.print(" ");
+        }
+        Serial.println();
+
+        Serial.print("RX ID: ");
+        for (int i = 0; i < 12; i++) {
+            Serial.print(packet[i], HEX);
+            Serial.print(" ");
+        }
+        Serial.println();
+
         status = packet[12];
+        Serial.print("Status byte: ");
+        Serial.println(status);
+
+        if (!idMatch) {
+            Serial.println("Control packet was not for this node");
+            return false;
+        }
+
         return true;
     }
 };
@@ -203,7 +237,6 @@ class Receiver {
 Measurements myMeasurements;
 Transmitter myTransmitter;
 Receiver myReceiver;
-LoRa.receive();
 
 void setup() {
     Serial.begin(115200);
@@ -245,6 +278,7 @@ void setup() {
         myMeasurements.readAll();
         myTransmitter.formatMeasurementPacket(myMeasurements);
         myTransmitter.transmitMeasurement();
+        LoRa.receive();
 
         if (myReceiver.receiveControl(5.0f)) {
             if (myReceiver.getStatus() != 0) {
@@ -276,6 +310,7 @@ void loop() {
 
         myTransmitter.formatMeasurementPacket(myMeasurements);
         myTransmitter.transmitMeasurement();
+        LoRa.receive();
 
         if (myReceiver.receiveControl(2.0f)) {
             uint8_t finalStatus = myReceiver.getStatus();
