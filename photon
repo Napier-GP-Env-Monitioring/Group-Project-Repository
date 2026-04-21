@@ -8,7 +8,6 @@
 Adafruit_GPS GPS(&GPSSerial);
 SHTC3 mySHTC3;
 
-bool loraReady = false;
 bool connectedToPi = false;
 uint8_t deviceID[12];
 
@@ -21,7 +20,7 @@ constexpr size_t CONTROL_PACKET_LEN = 13;
 constexpr size_t DATA_PACKET_LEN = 31;
 
 void extractDeviceID(uint8_t* out) {
-    String id = System.deviceID(); // 24 hex chars = 12 bytes
+    String id = System.deviceID();
     for (int i = 0; i < 12; i++) {
         String byteStr = id.substring(i * 2, i * 2 + 2);
         out[i] = (uint8_t)strtol(byteStr.c_str(), nullptr, 16);
@@ -34,8 +33,8 @@ class Measurements {
     uint8_t humidity = 0;
     uint16_t pressure = 0;
     uint8_t soilMoisture = 0;
-    uint32_t latitude = 0;   // packed to 24 bits
-    uint32_t longitude = 0;  // packed to 24 bits
+    uint32_t latitude = 0;
+    uint32_t longitude = 0;
 
   public:
     int16_t getTemperature() const { return temperature; }
@@ -44,21 +43,6 @@ class Measurements {
     uint8_t getSoilMoisture() const { return soilMoisture; }
     uint32_t getLatitude() const { return latitude; }
     uint32_t getLongitude() const { return longitude; }
-
-    void readAll() {
-        readSHTC3();
-        readPressure();
-        readSoilMoisture();
-
-        Serial.println();
-        Serial.println("Temperature: " + String(temperature / 100.0f) + " C");
-        Serial.println("Humidity: " + String(humidity) + " %");
-        Serial.println("Pressure: " + String(pressure) + " Pa");
-        Serial.println("Soil moisture: " + String(soilMoisture));
-        Serial.println("Latitude packed: " + String(latitude));
-        Serial.println("Longitude packed: " + String(longitude));
-        Serial.println();
-    }
 
     void readSHTC3() {
         mySHTC3.update();
@@ -101,13 +85,17 @@ class Measurements {
     }
 
     void readPressure() {
-        // Placeholder
-        pressure = 0;
+        pressure = 0; // placeholder
     }
 
     void readSoilMoisture() {
-        // Placeholder
-        soilMoisture = 0;
+        soilMoisture = 0; // placeholder
+    }
+
+    void readAll() {
+        readSHTC3();
+        readPressure();
+        readSoilMoisture();
     }
 };
 
@@ -116,20 +104,11 @@ class Transmitter {
     uint8_t payload[DATA_PACKET_LEN];
 
   public:
-    void transmit(size_t length) {
-        LoRa.beginPacket();
-        LoRa.write(payload, length);
-        LoRa.endPacket();
-        Serial.println("Packet sent");
-    }
-
-    void formatDataPacket(const Measurements& m) {
-        extractDeviceID(deviceID);
-        uint32_t timestamp = Time.now();
-
+    void formatMeasurementPacket(const Measurements& m) {
         memset(payload, 0, sizeof(payload));
         memcpy(payload, deviceID, 12);
 
+        uint32_t timestamp = Time.now();
         payload[12] = (timestamp >> 24) & 0xFF;
         payload[13] = (timestamp >> 16) & 0xFF;
         payload[14] = (timestamp >> 8) & 0xFF;
@@ -157,9 +136,16 @@ class Transmitter {
         payload[26] = (longitude >> 8) & 0xFF;
         payload[27] = longitude & 0xFF;
 
-        payload[28] = 0x00; // flags
-        payload[29] = 0x00; // crc placeholder
-        payload[30] = 0x00; // crc placeholder
+        payload[28] = 0x00;
+        payload[29] = 0x00;
+        payload[30] = 0x00;
+    }
+
+    void transmitMeasurement() {
+        LoRa.beginPacket();
+        LoRa.write(payload, DATA_PACKET_LEN);
+        LoRa.endPacket();
+        Serial.println("31-byte measurement packet sent");
     }
 };
 
@@ -171,7 +157,7 @@ class Receiver {
   public:
     uint8_t getStatus() const { return status; }
 
-    bool receive(float durationSeconds) {
+    bool receiveControl(float durationSeconds) {
         memset(packet, 0, sizeof(packet));
         status = 0;
 
@@ -180,7 +166,9 @@ class Receiver {
 
         while (millis() - start < (unsigned long)(durationSeconds * 1000.0f)) {
             packetSize = LoRa.parsePacket();
-            if (packetSize > 0) break;
+            if (packetSize > 0) {
+                break;
+            }
         }
 
         if (packetSize != CONTROL_PACKET_LEN) {
@@ -188,7 +176,6 @@ class Receiver {
                 while (LoRa.available()) {
                     LoRa.read();
                 }
-                Serial.println("Unexpected control packet size");
             }
             return false;
         }
@@ -199,24 +186,17 @@ class Receiver {
         }
 
         if (len != CONTROL_PACKET_LEN) {
-            Serial.println("Incomplete control packet");
             return false;
         }
 
-        bool idMatches = true;
         for (int i = 0; i < 12; i++) {
             if (packet[i] != deviceID[i]) {
-                idMatches = false;
-                break;
+                return false;
             }
         }
 
         status = packet[12];
-
-        Serial.print("Received control status: ");
-        Serial.println(status);
-
-        return idMatches;
+        return true;
     }
 };
 
@@ -237,13 +217,11 @@ void setup() {
     LoRa.setPins(D10, D3, D2);
     LoRa.setSyncWord(0x12);
 
-    loraReady = LoRa.begin(868E6);
-    if (!loraReady) {
+    if (!LoRa.begin(868E6)) {
         Serial.println("LoRa init failed");
         System.reset();
     }
 
-    // Keep radio settings aligned with Pi side.
     LoRa.setSpreadingFactor(7);
     LoRa.setSignalBandwidth(125E3);
     LoRa.setCodingRate4(5);
@@ -258,41 +236,52 @@ void setup() {
     GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
     delay(1000);
 
-    Serial.println("Trying to connect to base node...");
+    Serial.println("Registration phase starting");
 
     while (!connectedToPi) {
         myMeasurements.readGPS();
-        myTransmitter.formatDataPacket(myMeasurements);
-        myTransmitter.transmit(DATA_PACKET_LEN);
+        myMeasurements.readAll();
+        myTransmitter.formatMeasurementPacket(myMeasurements);
+        myTransmitter.transmitMeasurement();
 
-        bool match = myReceiver.receive(5.0f);
-        if (match && myReceiver.getStatus() == STATUS_REGISTER_ACK) {
-            connectedToPi = true;
-            break;
+        if (myReceiver.receiveControl(5.0f)) {
+            if (myReceiver.getStatus() != 0) {
+                connectedToPi = true;
+                Serial.println("Registered with Pi");
+                break;
+            }
         }
 
+        Serial.println("No valid registration ACK, retrying...");
         delay(1000);
     }
-
-    Serial.println("Connected to base node");
 }
 
-unsigned long lastGpsRead = 0;
-
 void loop() {
-    if (millis() - lastGpsRead >= 200) {
-        lastGpsRead = millis();
-        myMeasurements.readGPS();
-    }
+    myMeasurements.readGPS();
 
-    bool match = myReceiver.receive(0.2f);
-    if (!match) {
+    if (!myReceiver.receiveControl(0.5f)) {
         return;
     }
 
-    if (myReceiver.getStatus() == STATUS_REQUEST_READING) {
+    uint8_t status = myReceiver.getStatus();
+
+    if (status == STATUS_REQUEST_READING) {
+        Serial.println("Pi requested reading");
+
+        myMeasurements.readGPS();
         myMeasurements.readAll();
-        myTransmitter.formatDataPacket(myMeasurements);
-        myTransmitter.transmit(DATA_PACKET_LEN);
+
+        myTransmitter.formatMeasurementPacket(myMeasurements);
+        myTransmitter.transmitMeasurement();
+
+        if (myReceiver.receiveControl(2.0f)) {
+            uint8_t finalStatus = myReceiver.getStatus();
+            if (finalStatus == STATUS_SUCCESS) {
+                Serial.println("Pi accepted reading");
+            } else if (finalStatus == STATUS_FAIL) {
+                Serial.println("Pi reported failed reading");
+            }
+        }
     }
 }
