@@ -6,28 +6,36 @@ import sqlite3
 """
 Protocol
 
-Control packet (13 bytes)
-- 0..11  device_id (12 raw bytes)
-- 12     status
+Sensor -> Pi : 31-byte measurement packet
+Pi -> Sensor : 13-byte control packet
 
-Data packet (31 bytes)
-- 0..11  device_id (12 raw bytes)
-- 12..15 timestamp (uint32)
-- 16..17 temperature x100 (int16)
-- 18     humidity (uint8)
-- 19..20 pressure (uint16)
-- 21     soil moisture (uint8)
-- 22..24 latitude (uint24 scaled)
-- 25..27 longitude (uint24 scaled)
-- 28     flags (uint8)
-- 29..30 crc/checksum placeholder (uint16)
+31-byte sensor packet
+0..11   device_id (12 bytes)
+12..15  timestamp (uint32)
+16..17  temperature * 100 (int16)
+18      humidity (uint8)
+19..20  pressure (uint16)
+21      soil_moisture (uint8)
+22..24  latitude packed into 24 bits
+25..27  longitude packed into 24 bits
+28      flags (uint8)
+29..30  crc placeholder (uint16)
+
+13-byte control packet
+0..11   device_id (12 bytes)
+12      status
+
+Status codes
+0 = fail
+1 = success
+2 = registration acknowledgement
+4 = request reading
 """
 
 # -----------------------------
-# GPIO / SPI config
+# GPIO / SPI
 # -----------------------------
 RESET_PIN = 25
-CS_PIN = 8
 DIO0_PIN = 22
 
 GPIO.setmode(GPIO.BCM)
@@ -49,16 +57,16 @@ REG_FIFO_ADDR_PTR = 0x0D
 REG_FIFO_TX_BASE_ADDR = 0x0E
 REG_FIFO_RX_BASE_ADDR = 0x0F
 REG_FIFO_RX_CURRENT_ADDR = 0x10
-REG_RX_NB_BYTES = 0x13
 REG_IRQ_FLAGS = 0x12
+REG_RX_NB_BYTES = 0x13
 REG_PAYLOAD_LENGTH = 0x22
 REG_MODEM_CONFIG_1 = 0x1D
 REG_MODEM_CONFIG_2 = 0x1E
 REG_MODEM_CONFIG_3 = 0x26
-REG_VERSION = 0x42
+REG_LNA = 0x0C
 REG_SYNC_WORD = 0x39
 REG_DIO_MAPPING_1 = 0x40
-REG_LNA = 0x0C
+REG_VERSION = 0x42
 
 MODE_LONG_RANGE = 0x80
 MODE_SLEEP = 0x00
@@ -79,7 +87,7 @@ CONTROL_PACKET_LEN = 13
 DATA_PACKET_LEN = 31
 
 # -----------------------------
-# Helpers
+# SPI helpers
 # -----------------------------
 def spi_read(register):
     response = spi.xfer2([register & 0x7F, 0x00])
@@ -104,17 +112,17 @@ def set_frequency(frequency_mhz):
     spi_write(REG_FRF_MID, (frf >> 8) & 0xFF)
     spi_write(REG_FRF_LSB, frf & 0xFF)
 
-def device_id_to_hex(device_id_bytes):
-    return "".join(f"{b:02X}" for b in device_id_bytes)
+# -----------------------------
+# Utility
+# -----------------------------
+def device_id_to_hex(device_id):
+    return "".join(f"{b:02X}" for b in device_id)
 
 def write_to_db(device_id_hex, ts, t, h, p, sm, lat, lon):
     with sqlite3.connect("database/envMonDB.db") as conn:
         cursor = conn.cursor()
         cursor.execute(
-            """
-            INSERT INTO readings
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            "INSERT INTO readings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (device_id_hex, ts, t, h, p, sm, lat, lon)
         )
         conn.commit()
@@ -122,25 +130,17 @@ def write_to_db(device_id_hex, ts, t, h, p, sm, lat, lon):
 # -----------------------------
 # Packet parsing
 # -----------------------------
-def parse_control_packet(payload):
-    if payload is None or len(payload) != CONTROL_PACKET_LEN:
-        return None
-
-    device_id = bytes(payload[0:12])
-    status = payload[12]
-    return device_id, status
-
-def parse_data_packet(payload):
+def parse_sensor_packet(payload):
     if payload is None or len(payload) != DATA_PACKET_LEN:
         return None
 
     device_id = bytes(payload[0:12])
 
     timestamp = (
-        (payload[12] << 24)
-        | (payload[13] << 16)
-        | (payload[14] << 8)
-        | payload[15]
+        (payload[12] << 24) |
+        (payload[13] << 16) |
+        (payload[14] << 8) |
+        payload[15]
     )
 
     raw_temp = (payload[16] << 8) | payload[17]
@@ -175,7 +175,7 @@ def parse_data_packet(payload):
     }
 
 # -----------------------------
-# LoRa device classes
+# LoRa classes
 # -----------------------------
 class Receiver:
     def __init__(self):
@@ -189,8 +189,7 @@ class Receiver:
 
             if irq & IRQ_PAYLOAD_CRC_ERROR:
                 spi_write(REG_IRQ_FLAGS, 0xFF)
-                print("CRC error on received packet")
-                time.sleep(0.05)
+                print("CRC error")
                 continue
 
             if irq & IRQ_RX_DONE:
@@ -201,11 +200,9 @@ class Receiver:
                 self.payload = [spi_read(REG_FIFO) for _ in range(length)]
                 spi_write(REG_IRQ_FLAGS, 0xFF)
 
-                if not self.payload:
-                    return False
-
-                print(f"Packet received ({length} bytes): {self.payload}")
-                return True
+                if self.payload:
+                    print(f"Received packet ({length} bytes)")
+                    return True
 
             time.sleep(0.05)
 
@@ -217,7 +214,7 @@ class Transmitter:
 
     def format_control_packet(self, device_id, status):
         if len(device_id) != 12:
-            raise ValueError("device_id must be exactly 12 bytes")
+            raise ValueError("device_id must be 12 bytes")
 
         self.payload = list(device_id) + [status]
 
@@ -239,7 +236,7 @@ class Transmitter:
         spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_RX_CONTINUOUS)
 
 # -----------------------------
-# LoRa init
+# Init
 # -----------------------------
 def init_lora():
     reset_module()
@@ -261,8 +258,8 @@ def init_lora():
     spi_write(REG_FIFO_RX_BASE_ADDR, 0x00)
 
     spi_write(REG_LNA, 0x23)
-    spi_write(REG_MODEM_CONFIG_1, 0x72)   # BW 125kHz, CR 4/5
-    spi_write(REG_MODEM_CONFIG_2, 0x74)   # SF7, CRC on
+    spi_write(REG_MODEM_CONFIG_1, 0x72)
+    spi_write(REG_MODEM_CONFIG_2, 0x74)
     spi_write(REG_MODEM_CONFIG_3, 0x04)
     spi_write(REG_SYNC_WORD, 0x12)
     spi_write(REG_DIO_MAPPING_1, 0x00)
@@ -271,80 +268,84 @@ def init_lora():
     spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_RX_CONTINUOUS)
 
 # -----------------------------
-# Hub logic
+# Hub state
 # -----------------------------
 receiver = Receiver()
 transmitter = Transmitter()
 registered_nodes = []
 
-def register_node(device_id):
-    if device_id in registered_nodes:
-        return
-
-    print(f"Registering node {device_id_to_hex(device_id)}")
-    transmitter.format_control_packet(device_id, STATUS_REGISTER_ACK)
-
-    for _ in range(5):
+def send_status(device_id, status, repeat=1, gap=0.2):
+    transmitter.format_control_packet(device_id, status)
+    for _ in range(repeat):
         transmitter.transmit()
-        time.sleep(0.5)
+        time.sleep(gap)
 
-    registered_nodes.append(device_id)
-    print(f"Registered node {device_id_to_hex(device_id)}")
+def registration_phase():
+    if receiver.receive(timeout=5.0):
+        packet = parse_sensor_packet(receiver.payload)
+        if packet is None:
+            return
 
-def poll_node(device_id):
-    transmitter.format_control_packet(device_id, STATUS_REQUEST_READING)
-    transmitter.transmit()
+        device_id = packet["device_id"]
+        if device_id not in registered_nodes:
+            registered_nodes.append(device_id)
+            print(f"Registered node {device_id_to_hex(device_id)}")
+        else:
+            print(f"Node already known: {device_id_to_hex(device_id)}")
 
-    attempts = 0
-    while attempts < 10:
-        attempts += 1
+        send_status(device_id, STATUS_REGISTER_ACK, repeat=3, gap=0.3)
 
-        if receiver.receive(timeout=2.0):
-            parsed = parse_data_packet(receiver.payload)
-            if parsed is None:
-                continue
+def normal_operation_phase():
+    for device_id in list(registered_nodes):
+        print(f"Requesting reading from {device_id_to_hex(device_id)}")
+        send_status(device_id, STATUS_REQUEST_READING)
 
-            if parsed["device_id"] != device_id:
-                print("Received packet from different node, ignoring")
-                continue
+        success = False
+        attempts = 0
 
-            device_hex = device_id_to_hex(parsed["device_id"])
-            print(f"Reading received from {device_hex}")
-            print(parsed)
+        while attempts < 5:
+            attempts += 1
 
-            write_to_db(
-                device_hex,
-                parsed["timestamp"],
-                parsed["temperature"],
-                parsed["humidity"],
-                parsed["pressure"],
-                parsed["soil_moisture"],
-                parsed["latitude"],
-                parsed["longitude"],
-            )
+            if receiver.receive(timeout=2.0):
+                packet = parse_sensor_packet(receiver.payload)
+                if packet is None:
+                    continue
 
-            transmitter.format_control_packet(device_id, STATUS_SUCCESS)
-            transmitter.transmit()
-            return True
+                if packet["device_id"] != device_id:
+                    print("Packet was for a different node")
+                    continue
 
-    print(f"No valid response from {device_id_to_hex(device_id)}")
-    transmitter.format_control_packet(device_id, STATUS_FAIL)
-    transmitter.transmit()
-    return False
+                device_hex = device_id_to_hex(packet["device_id"])
+                print(f"Measurement received from {device_hex}")
+
+                write_to_db(
+                    device_hex,
+                    packet["timestamp"],
+                    packet["temperature"],
+                    packet["humidity"],
+                    packet["pressure"],
+                    packet["soil_moisture"],
+                    packet["latitude"],
+                    packet["longitude"],
+                )
+
+                send_status(device_id, STATUS_SUCCESS)
+                success = True
+                break
+
+        if not success:
+            print(f"Failed to get reading from {device_id_to_hex(device_id)}")
+            send_status(device_id, STATUS_FAIL)
+
+        time.sleep(0.2)
 
 def main_loop():
     while True:
-        if registered_nodes:
-            for device_id in list(registered_nodes):
-                poll_node(device_id)
-                time.sleep(0.2)
+        if not registered_nodes:
+            registration_phase()
         else:
-            if receiver.receive(timeout=5.0):
-                parsed = parse_data_packet(receiver.payload)
-                if parsed is None:
-                    continue
-
-                register_node(parsed["device_id"])
+            registration_phase()
+            normal_operation_phase()
 
 if __name__ == "__main__":
     try:
