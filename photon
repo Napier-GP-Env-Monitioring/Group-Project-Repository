@@ -203,6 +203,7 @@ class Receiver {
 Measurements myMeasurements;
 Transmitter myTransmitter;
 Receiver myReceiver;
+LoRa.receive();
 
 void setup() {
     Serial.begin(115200);
@@ -226,6 +227,7 @@ void setup() {
     LoRa.setSignalBandwidth(125E3);
     LoRa.setCodingRate4(5);
     LoRa.enableCrc();
+    LoRa.receive();
 
     if (mySHTC3.begin() != SHTC3_Status_Nominal) {
         Serial.println("SHTC3 init failed");
