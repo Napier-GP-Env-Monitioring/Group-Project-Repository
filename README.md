@@ -9,11 +9,11 @@ Firmware for a prototype mesh sensor network using Raspberry Pi Zero and Particl
 * 	Device handshake for polling 
 
 # Dependencies
-Photon 2
+## Photon 2
 * Arduino_LoRa https://github.com/sandeepmistry/arduino-LoRa
 * SparkFun SHTC3 Arduino Library
 * Adafruit_GPS
 
-Raspberry Pi
+## Raspberry Pi
 * spidev
 * RPi.GPIO

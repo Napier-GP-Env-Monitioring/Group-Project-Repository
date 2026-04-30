@@ -61,6 +61,7 @@ REG_LNA = 0x0C
 REG_SYNC_WORD = 0x39
 REG_DIO_MAPPING_1 = 0x40
 REG_VERSION = 0x42
+
 REG_PA_CONFIG = 0x09
 
 MODE_LONG_RANGE = 0x80
@@ -81,11 +82,9 @@ STATUS_REQUEST_READING = 4
 CONTROL_PACKET_LEN = 13
 DATA_PACKET_LEN = 31
 
-
 def spi_read(register):
     response = spi.xfer2([register & 0x7F, 0x00])
     return response[1]
-
 
 def spi_write(register, value):
     if isinstance(value, (bytes, bytearray, list)):
@@ -93,14 +92,12 @@ def spi_write(register, value):
     else:
         spi.xfer2([register | 0x80, int(value)])
 
-
 def reset_module():
     GPIO.setup(RESET_PIN, GPIO.OUT)
     GPIO.output(RESET_PIN, GPIO.LOW)
     time.sleep(0.05)
     GPIO.output(RESET_PIN, GPIO.HIGH)
     time.sleep(0.1)
-
 
 def set_frequency(frequency_mhz):
     frf = int(frequency_mhz * 1000000.0 / 61.03515625)
@@ -124,7 +121,6 @@ def set_tx_power(power_dbm):
 
     print(f"TX power set to {power_dbm} dBm (REG_PA_CONFIG = 0x{pa_config:02X})")
 
-
 def init_database():
     os.makedirs(DB_DIR, exist_ok=True)
 
@@ -146,7 +142,6 @@ def init_database():
 
     print(f"Database ready at: {os.path.abspath(DB_PATH)}")
 
-
 def write_to_db(device_id_hex, ts, t, h, p, sm, lat, lon):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
@@ -166,10 +161,8 @@ def write_to_db(device_id_hex, ts, t, h, p, sm, lat, lon):
 
     print(f"Saved reading for {device_id_hex}")
 
-
 def device_id_to_hex(device_id):
     return "".join(f"{b:02X}" for b in device_id)
-
 
 def parse_sensor_packet(payload):
     if payload is None or len(payload) != DATA_PACKET_LEN:
@@ -215,7 +208,6 @@ def parse_sensor_packet(payload):
         "crc": crc,
     }
 
-
 class Receiver:
     def __init__(self):
         self.payload = None
@@ -248,7 +240,6 @@ class Receiver:
 
         return False
 
-
 class Transmitter:
     def __init__(self):
         self.payload = [0] * CONTROL_PACKET_LEN
@@ -274,7 +265,6 @@ class Transmitter:
 
         spi_write(REG_IRQ_FLAGS, 0xFF)
         spi_write(REG_OP_MODE, MODE_LONG_RANGE | MODE_RX_CONTINUOUS)
-
 
 def init_lora():
     reset_module()
@@ -325,7 +315,6 @@ def send_status(device_id, status, repeat=1, gap=0.2):
         transmitter.transmit()
         time.sleep(gap)
 
-
 def registration_phase():
     if receiver.receive(timeout=5.0):
         packet = parse_sensor_packet(receiver.payload)
@@ -340,7 +329,6 @@ def registration_phase():
             print(f"Node already known: {device_id_to_hex(device_id)}")
 
         send_status(device_id, STATUS_REGISTER_ACK, repeat=3, gap=0.3)
-
 
 def normal_operation_phase():
     for device_id in list(registered_nodes):
@@ -386,7 +374,6 @@ def normal_operation_phase():
 
         time.sleep(0.2)
 
-
 def main_loop():
     while True:
         if not registered_nodes:
@@ -394,7 +381,6 @@ def main_loop():
         else:
             registration_phase()
             normal_operation_phase()
-
 
 if __name__ == "__main__":
     try:
